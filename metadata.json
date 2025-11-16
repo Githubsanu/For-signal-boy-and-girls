@@ -1,0 +1,7 @@
+{
+  "name": "Amore AI",
+  "description": "A charming and playful AI companion for a romantic chat experience.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
