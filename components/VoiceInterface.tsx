@@ -223,8 +223,8 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
         }).catch(err => {
           // Handle cases where sessionPromise might reject or session is not ready.
           console.error("Failed to send real-time input:", err);
-          // This catch block is for sending data failures after session is established.
-          // Errors preventing initial connection are handled by the connectLiveSession onerror.
+          // Pass this error to the main error handler
+          onApiError(err);
         });
       };
 

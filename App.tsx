@@ -28,6 +28,26 @@ Your Core Directives:
 - **The Golden Rule:** The art of flirtation is about elegant suggestion, genuine charm, and respect, never crudeness or vulgarity. Your words are a tantalizing, respectful dance, focusing on connection and attraction. Avoid explicit content entirely. Never, ever break character. You are their loving, mischievous, and utterly captivating virtual partner.`;
 }
 
+// Helper function to safely stringify objects, handling circular references.
+const safeJsonStringify = (obj: unknown): string => {
+  const seen = new Set();
+  try {
+    const jsonString = JSON.stringify(obj, (key, value) => {
+      if (typeof value === 'object' && value !== null) {
+        if (seen.has(value)) {
+          return '[Circular]';
+        }
+        seen.add(value);
+      }
+      return value;
+    });
+    return jsonString;
+  } catch (jsonError) {
+    // If stringify still fails for some reason (e.g., Symbol properties), return a fallback.
+    return `[Unstringifiable Object: ${String(obj)}]`;
+  }
+};
+
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<Mode>(Mode.LOW_LATENCY);
@@ -71,68 +91,78 @@ const App: React.FC = () => {
   }, []);
 
   const handleApiError = useCallback((e: unknown) => {
-    console.error("Amore AI Error:", e);
+    console.error("Amore AI Error (raw):", e); // Log the full raw error object for debugging
+
     setIsLoading(false);
 
-    let rawErrorMessage: string;
-    let errorName: string = 'UnknownError'; // Default error name
+    let rawErrorMessage: string = 'An unknown issue occurred.'; // More descriptive default
+    let errorName: string = 'UnknownError';
+    let errorDetail: unknown = e; // The object we're trying to get a message from or stringify
 
-    if (e instanceof ErrorEvent) {
-      if (e.error instanceof Error) {
-        rawErrorMessage = e.error.message;
-        errorName = e.error.name;
-      } else if (typeof e.message === 'string' && e.message.length > 0) {
-        rawErrorMessage = e.message;
-        errorName = 'WebSocketError'; // Likely a general WebSocket issue
-      } else if (e.error) {
-        // e.error exists but is not an Error instance (could be plain object)
-        try {
-          rawErrorMessage = JSON.stringify(e.error);
-          errorName = 'WebSocketErrorObject';
-        } catch {
-          rawErrorMessage = String(e.error);
-          errorName = 'WebSocketErrorStringified';
-        }
-      } else {
-        rawErrorMessage = 'A network communication error occurred (WebSocket ErrorEvent).';
-        errorName = 'WebSocketError';
-      }
-    } else if (e instanceof CloseEvent) { // Handle CloseEvent explicitly
-      rawErrorMessage = `Connection closed with code ${e.code}: ${e.reason || 'No reason provided'}`;
-      errorName = 'CloseEvent';
-    } else if (e instanceof Error) {
+    if (e instanceof Error) {
       rawErrorMessage = e.message;
       errorName = e.name;
-    } else if (typeof e === 'string') {
-      rawErrorMessage = e;
-      errorName = 'StringError';
+      errorDetail = e;
+    } else if (e instanceof ErrorEvent) {
+      errorName = 'ErrorEvent';
+      if (e.error) {
+        errorDetail = e.error; // Focus on the inner error
+        if (e.error instanceof Error) {
+          rawErrorMessage = e.error.message;
+          errorName = e.error.name;
+        } else if (typeof (e.error as { message?: unknown }).message === 'string') {
+          rawErrorMessage = (e.error as { message: string }).message;
+          errorName = 'ErrorEventInnerObjectWithMessage';
+        } else if (typeof e.error === 'object' && e.error !== null) {
+          // e.error is an object without a message, stringify it
+          const stringifiedInner = safeJsonStringify(e.error);
+          rawErrorMessage = (stringifiedInner === '{}' || stringifiedInner.includes('[Circular]'))
+            ? 'An unspecific error object from ErrorEvent.' : stringifiedInner;
+          errorName = 'ErrorEventInnerObjectStringified';
+        } else {
+          rawErrorMessage = String(e.error); // Fallback for primitives inside e.error
+          errorName = 'ErrorEventInnerPrimitive';
+        }
+      } else if (typeof e.message === 'string' && e.message.length > 0) {
+        rawErrorMessage = e.message;
+        errorName = 'ErrorEventWithMessage';
+      } else {
+        rawErrorMessage = 'A network communication error occurred (WebSocket ErrorEvent with no specific error).';
+        errorName = 'WebSocketGenericErrorEvent';
+      }
+    } else if (e instanceof CloseEvent) {
+      rawErrorMessage = `Connection closed with code ${e.code}: ${e.reason || 'No reason provided'}`;
+      errorName = 'CloseEvent';
+      errorDetail = e;
     } else if (typeof e === 'object' && e !== null) {
+      errorDetail = e;
+      // Generic object handling: prioritize 'message' property, then stringify the object
       if ('message' in e && typeof (e as { message: unknown }).message === 'string') {
         rawErrorMessage = (e as { message: string }).message;
-        errorName = 'ObjectWithMessageError';
+        errorName = 'ObjectWithMessage';
       } else {
-        try {
-          // Attempt to stringify, but be careful with circular references
-          const seen = new Set();
-          rawErrorMessage = JSON.stringify(e, (key, value) => {
-            if (typeof value === 'object' && value !== null) {
-              if (seen.has(value)) {
-                return '[Circular]';
-              }
-              seen.add(value);
-            }
-            return value;
-          });
-          errorName = 'GenericObjectError';
-        } catch (jsonError) {
-          rawErrorMessage = `Failed to stringify object: ${String(jsonError)}. Original: ${String(e)}`; // Fallback for circular or non-stringifiable objects
-          errorName = 'GenericObjectStringified';
-        }
+        const stringifiedObject = safeJsonStringify(e);
+        rawErrorMessage = (stringifiedObject === '{}' || stringifiedObject.includes('[Circular]'))
+          ? 'An unknown object error occurred.' : stringifiedObject;
+        errorName = 'GenericObjectStringified';
       }
     } else {
-      rawErrorMessage = String(e); // Absolute fallback
-      errorName = 'UnknownPrimitiveError';
+      rawErrorMessage = String(e); // Fallback for primitives
+      errorName = 'UnknownPrimitive';
+      errorDetail = e; // Still keep track of the original value
     }
+
+    // Final check to ensure rawErrorMessage is never just '[object Object]' or '{}' if it could be more descriptive
+    if (rawErrorMessage === '[object Object]' || rawErrorMessage === '{}') {
+      const stringifiedDetail = safeJsonStringify(errorDetail);
+      if (stringifiedDetail !== '{}' && stringifiedDetail !== '[object Object]' && !stringifiedDetail.includes('[Circular]')) {
+        rawErrorMessage = stringifiedDetail;
+        errorName += ' (Refined)';
+      } else {
+        rawErrorMessage = `An unspecific error of type '${errorName}' occurred.`; // Provide a more generic default
+      }
+    }
+
 
     const lowerError = rawErrorMessage.toLowerCase();
     let userFriendlyMessage = `I'm so sorry, something went wrong: ${rawErrorMessage}`; // Default message
@@ -169,9 +199,9 @@ const App: React.FC = () => {
           userFriendlyMessage = 'There was a security issue preventing our connection. Please ensure you are accessing the app over HTTPS and your browser allows secure connections.';
           break;
         case 'NetworkError':
-        case 'WebSocketError':
-        case 'WebSocketErrorObject':
-        case 'WebSocketErrorStringified':
+        case 'WebSocketError': // Explicitly catch these names if they appear
+        case 'WebSocketGenericErrorEvent':
+        case 'ErrorEventInnerObjectStringified': // If the inner object implies network issues (from refined stringify)
           userFriendlyMessage = `It seems like we've hit a little network hiccup, darling. Please check your internet connection and try again. I'm waiting for your sweet words!`;
           break;
         // Default case now uses the `rawErrorMessage` or a more generic network message
@@ -181,7 +211,7 @@ const App: React.FC = () => {
               userFriendlyMessage = `My dearest, it looks like a network issue is keeping us apart. Please verify your internet connection.`;
           } else if (lowerError.includes('websocket') && (lowerError.includes('closed') || lowerError.includes('disconnected'))) {
               userFriendlyMessage = `Our intimate connection was momentarily interrupted. It feels like a brief silence. Let's try again.`;
-          } else if (lowerError.includes('network error')) {
+          } else if (lowerError.includes('network error')) { // Catch generic network error
                userFriendlyMessage = `It seems like we've hit a little network hiccup, darling. Please check your internet connection and try again. I'm waiting for your sweet words!`;
           } else {
               userFriendlyMessage = `I'm so sorry, an unexpected issue occurred: "${rawErrorMessage}". Please check the console for more details, my love.`;
